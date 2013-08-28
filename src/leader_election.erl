@@ -1,91 +1,79 @@
 -module(leader_election).
+-behavior(gen_server).
 
--export([
-	behaviour_info/1,
-	start/3]).
+-define(SERVER, ?MODULE).
 
--ifdef(debug).
--define(idbg(FmtStr, Err), error_logger:info_msg("~p (line ~p, pid ~p): " FmtStr "~n", [?MODULE, ?LINE, self() | Err])).
--define(rdbg(Term), error_logger:info_report(Term)).
--else.
--define(idbg(_FmtStr, _Err), void).
--define(rdbg(_Term), void).
--endif.
+-include("logging.hrl").
 
-start(Module, W, Ps) ->
-	participant_loop(Module, W, rearrange_ring(Module, W, Ps)).
+-export([elect/1]).
+-export([start_link/0]).
+-export([stop/0]).
 
-behaviour_info(callbacks) -> % returned list with all needed callbacks
-    [
-		{ participant_alive,      1 },
-    	{ send_message,           2 },
-		{ get_participant_weight, 1 },
-		{ leader_elected,         2 },
-		{ quorum_failed,          1 }
-	];
-behaviour_info(_Other) ->
-    undefined.
+%% gen_server.
+-export([init/1]).
+-export([handle_call/3]).
+-export([handle_cast/2]).
+-export([handle_info/2]).
+-export([terminate/2]).
+-export([code_change/3]).
 
-rearrange_ring(Module, Weight, Participants) ->
-	{LT, GE} = lists:partition(fun(P) -> Module:get_participant_weight(P) < Weight end, Participants),
-	GE ++ LT.
+elect(Timeout) ->
+	gen_server:call(?SERVER, start_election, Timeout).
 
-find_first_alive(_Module, []) ->
-	{ not_found };
-find_first_alive(Module, [H | T]) ->
-	Alive = Module:participant_alive(H),
-	if Alive -> 
-		[ H | T ];
-	true -> 
-		find_first_alive(Module, T)
-	end.
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-construct_new_path(Module, [P|T], Me) ->
-	W1 = Module:get_participant_weight(P),
-	W2 = Module:get_participant_weight(Me),
-	if W2 > W1 -> 
-		[Me];
-	true -> 
-		[P|T] ++ [Me]
-	end.
+stop() ->
+    gen_server:call(?SERVER, stop).
 
-forward_election_message(Module, W, Ps, NewPath) ->
-	?idbg("Forward: ~p ~p ~p", [ W, Ps, NewPath ]),
+init([]) ->
+	{ok, {}}.
 
-	[ _ | Others ] = Ps,
-	case find_first_alive(Module, Others) of
-		{ not_found } ->
-			%% io:format("Damn! Nobody around is alive");
-			Module:quorum_failed(0);
+node_alive(pong) ->
+	true;
+node_alive(pang) ->
+	false;
+node_alive(N) ->
+	?idbg("node alive ~p", [ N ]),
+	node_alive(net_adm:ping(N)).
 
-		[ NextAlive | _ ] ->
-			?idbg("Next alive: ~p", [ NextAlive ]),
-			Module:send_message(NextAlive, { election, NewPath }),
-			participant_loop(Module, W, Ps)
-	end.
+%% @private
+handle_call(stop, _From, _State) ->
+	{stop, normal, stopped, _State};
 
-participant_loop(Module, W, Ps) ->
-	?idbg("Participants: ~p", [ Ps ]),
-	[ Me | _ ] = Ps,
-	receive
-		{start_election} -> 
-			forward_election_message(Module, W, Ps, [ Me ]);
+handle_call(start_election, _From, _State) ->
+	{ok, Ps}   = application:get_env(participants),
 
-		{election, CurrentPath} ->
-			?idbg("Me ~p Path: ~p", [ Me, CurrentPath ]),
-			[ Initial | _ ] = CurrentPath,
+	?idbg("start_election participants: ~p", [ Ps ]),
 
-			if Initial == Me ->
-				if length(CurrentPath) * 2 > length(Ps) ->
-					?idbg("Im a leader ~p", [ Me ]),
-					Module:leader_elected(W, CurrentPath);
-				true ->
-					?idbg("Quorum failed ~p", [ Me ]),
-					Module:quorum_failed(length(CurrentPath) - 1)
-				end,
-				participant_loop(Module, W, Ps);
-			true ->
-				NewPath = construct_new_path(Module, CurrentPath, Me),
-				forward_election_message(Module, W, Ps, NewPath)
-			end
-	end.
+	AliveNodes = lists:filter(fun(N) -> node_alive(N) end, Ps),
+	MinNode    = lists:min(AliveNodes),
+
+	if node() == MinNode ->
+		if length(AliveNodes) * 2 > length(Ps) ->
+			{reply, node(), _State};
+		true ->
+			{reply, quorum_failed, _State}
+		end;
+	true ->
+		Response = gen_server:call({?SERVER, MinNode}, start_election),
+		{reply, Response, _State}
+	end;
+
+handle_call(_Request, _From, _State) ->
+	{reply, ignored, _State}.
+
+%% @private
+handle_cast(_Msg, _State) ->
+	{noreply, _State}.
+
+%% @private
+handle_info(_Info, _State) ->
+	{noreply, _State}.
+
+%% @private
+terminate(_Reason, _State) ->
+	ok.
+
+code_change(_OldVsn, _State, _Extra) ->
+	{ok, _State}.
