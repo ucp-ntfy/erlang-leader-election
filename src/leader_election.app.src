@@ -1,0 +1,9 @@
+{application, leader_election,
+ [
+  {description, "Leader election framework"},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {mod, {leader_election_app, []}},
+  {env, []}
+ ]}.
