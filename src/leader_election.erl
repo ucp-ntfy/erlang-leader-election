@@ -37,28 +37,71 @@ node_alive(N) ->
 	?idbg("node alive ~p", [ N ]),
 	node_alive(net_adm:ping(N)).
 
-%% @private
+find_first_alive([]) ->
+    { not_found };
+find_first_alive([H | T]) ->
+    Alive = node_alive(H),
+    if Alive ->
+        [ H | T ];
+    true ->
+        find_first_alive(T)
+    end.
+
+%% returns array where first element is current node and the rest is ring of nodes
+make_ring(Ps) ->
+	Node = node(),
+	true = lists:member(Node, Ps),
+	{LT,GT} = lists:partition(fun(P) -> P < Node end, Ps),
+	GT ++ LT.
+
+forward_next(Me, Others, Path, Ps, From, State) ->
+	case find_first_alive(Others) of
+		not_found ->
+			{reply, quorum_failed, State};
+		[ NextAlive | _ ] ->
+			?idbg("Next alive: ~p", [ NextAlive ]),
+			spawn_link(fun() ->
+				Reply = gen_server:call({?SERVER, NextAlive}, {election, Path ++ [ Me ], Ps}),
+				gen_server:reply(From, Reply)
+			end),
+			{noreply, State}
+	end.
+
 handle_call(stop, _From, _State) ->
 	{stop, normal, stopped, _State};
 
-handle_call(start_election, _From, _State) ->
-	{ok, Ps}   = application:get_env(participants),
+handle_call({election, Path, Ps}, From, State) ->
+	?idbg("election with Path ~p, Participants: ~p", [ Path, Ps ]),
 
-	?idbg("start_election participants: ~p", [ Ps ]),
-
-	AliveNodes = lists:filter(fun(N) -> node_alive(N) end, Ps),
-	MinNode    = lists:min(AliveNodes),
-
-	if node() == MinNode ->
-		if length(AliveNodes) * 2 > length(Ps) ->
-			{reply, node(), _State};
-		true ->
-			{reply, quorum_failed, _State}
-		end;
-	true ->
-		Response = gen_server:call({?SERVER, MinNode}, start_election),
-		{reply, Response, _State}
+	[ Me | Others ] = make_ring(Ps),
+	
+	case Path of
+		[ PathInit | _ ] ->
+			if Me == PathInit ->
+				if length(Path) * 2 > length(Ps) ->
+					?idbg("Im a leader ~p", [ Me ]),
+					{ reply, { leader_elected, Me, Path }, State };
+				true ->
+					?idbg("Quorum failed ~p", [ Me ]),
+					{ reply, quorum_failed, State }
+				end;
+			true ->
+				if Me < PathInit ->
+					forward_next(Me, Others, [], Ps, From, State);
+				true ->
+					forward_next(Me, Others, Path, Ps, From, State)
+				end
+			end;
+			
+		[] ->
+			forward_next(Me, Others, Path, Ps, From, State)
 	end;
+
+handle_call(start_election, _From, _State) ->
+	{ok, Ps} = application:get_env(participants),
+	?idbg("start_election participants: ~p, me: ~p", [ Ps, node() ]),
+	true = lists:member(node(), Ps),
+	handle_call({election, [], Ps}, _From, _State);
 
 handle_call(_Request, _From, _State) ->
 	{reply, ignored, _State}.

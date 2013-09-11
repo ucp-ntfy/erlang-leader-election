@@ -1,0 +1,11 @@
+Compile:
+rebar compile
+
+Test:
+test/test_leader_election.sh
+
+How to add node to cluster
+
+Challenge:
+participants list in config file couldn't be changed atomically.
+
