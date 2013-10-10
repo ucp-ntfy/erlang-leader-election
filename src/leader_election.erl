@@ -29,16 +29,19 @@ stop() ->
 init([]) ->
 	{ok, {}}.
 
-node_alive(pong) ->
-	true;
-node_alive(pang) ->
-	false;
+% node_alive(pong) ->
+%	true;
+%node_alive(pang) ->
+%	false;
 node_alive(N) ->
 	?idbg("node alive ~p", [ N ]),
-	node_alive(net_adm:ping(N)).
+	case catch gen_server:call({?SERVER, N}, ping) of
+		pong -> true;
+		_    -> false
+	end.
 
 find_first_alive([]) ->
-    { not_found };
+    not_found;
 find_first_alive([H | T]) ->
     Alive = node_alive(H),
     if Alive ->
@@ -106,6 +109,10 @@ handle_call(start_election, _From, _State) ->
 	true ->
 		handle_call({election, [], Ps}, _From, _State)
 	end;
+
+handle_call(ping, _From, State) ->
+	{reply, pong, State}
+	;
 
 handle_call(_Request, _From, _State) ->
 	{reply, ignored, _State}.
