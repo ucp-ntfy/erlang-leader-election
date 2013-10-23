@@ -17,8 +17,16 @@
 -export([terminate/2]).
 -export([code_change/3]).
 
+safe_gen_server_call(Server, Message, Timeout, DefaultValue) ->
+	case catch gen_server:call(Server, Message, Timeout) of
+		{'EXIT',_} ->
+			DefaultValue;
+		Response ->
+			Response
+	end.
+
 elect(Timeout) ->
-	gen_server:call(?SERVER, start_election, Timeout).
+	safe_gen_server_call(?SERVER, start_election, Timeout, quorum_failed).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -64,7 +72,7 @@ forward_next(Me, Others, Path, Ps, From, State) ->
 		[ NextAlive | _ ] ->
 			?idbg("Next alive: ~p", [ NextAlive ]),
 			spawn_link(fun() ->
-				Reply = gen_server:call({?SERVER, NextAlive}, {election, Path ++ [ Me ], Ps}),
+				Reply = safe_gen_server_call({?SERVER, NextAlive}, {election, Path ++ [ Me ], Ps}, 3000, quorum_failed),
 				gen_server:reply(From, Reply)
 			end),
 			{noreply, State}
