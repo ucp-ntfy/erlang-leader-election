@@ -8,6 +8,7 @@
 -export([elect/1]).
 -export([start_link/0]).
 -export([stop/0]).
+-export([ping/0]).
 
 %% gen_server.
 -export([init/1]).
@@ -34,6 +35,9 @@ start_link() ->
 stop() ->
     gen_server:call(?SERVER, stop).
 
+ping() ->
+	pong.
+
 init([]) ->
 	{ok, {}}.
 
@@ -43,7 +47,8 @@ init([]) ->
 %	false;
 node_alive(N) ->
 	?idbg("node alive ~p", [ N ]),
-	case catch gen_server:call({?SERVER, N}, ping) of
+	case catch rpc:block_call(N, ?MODULE, ping, [], 3000) of
+%	case catch gen_server:call({?SERVER, N}, ping) of
 		pong -> true;
 		_    -> false
 	end.
@@ -85,7 +90,7 @@ handle_call({election, Path, Ps}, From, State) ->
 	?idbg("election with Path ~p, Participants: ~p", [ Path, Ps ]),
 
 	[ Me | Others ] = make_ring(Ps),
-	
+
 	case Path of
 		[ PathInit | _ ] ->
 			if Me == PathInit ->
@@ -103,7 +108,7 @@ handle_call({election, Path, Ps}, From, State) ->
 					forward_next(Me, Others, Path, Ps, From, State)
 				end
 			end;
-			
+
 		[] ->
 			forward_next(Me, Others, Path, Ps, From, State)
 	end;
