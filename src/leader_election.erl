@@ -47,10 +47,11 @@ init([]) ->
 %	false;
 node_alive(N) ->
 	?idbg("node alive ~p", [ N ]),
-	case catch rpc:block_call(N, ?MODULE, ping, [], 3000) of
-%	case catch gen_server:call({?SERVER, N}, ping) of
-		pong -> true;
-		_    -> false
+	case catch rpc:block_call(N, ?MODULE, handle_call, [ping, undef, undef], 3000) of
+		{reply,pong,undef} ->
+			true;
+		_ ->
+			false
 	end.
 
 find_first_alive([]) ->
