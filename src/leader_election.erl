@@ -46,11 +46,15 @@ init([]) ->
 %node_alive(pang) ->
 %	false;
 node_alive(N) ->
-	?idbg("node alive ~p", [ N ]),
-	case catch rpc:block_call(N, ?MODULE, handle_call, [ping, undef, undef], 1000) of
-		{reply,pong,undef} ->
+	?idbg("pinging node ~p...", [ N ]),
+	Key = rpc:async_call(N, ?MODULE, handle_call, [ping, undef, undef]),
+
+	case catch rpc:nb_yield(Key, 500) of
+		{value,{reply,pong,undef}} ->
+			?idbg("node ~p is alive", [ N ]),
 			true;
-		_ ->
+		Res ->
+			?idbg("node ~p is not alive (~p)", [ N, Res ]),
 			false
 	end.
 
