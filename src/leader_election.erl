@@ -120,7 +120,7 @@ handle_call({election, Path, Ps}, From, State) ->
 
 handle_call(start_election, _From, _State) ->
 	{ok, Ps0} = application:get_env(participants),
-	?idbg("start_election participants: ~p, me: ~p", [ Ps, node() ]),
+	?idbg("start_election participants: ~p, me: ~p", [ Ps0, node() ]),
 
 	% Guarantee, that node() is in the list and allow setting empty list for single-node configurations
 	Ps = [node() | lists:delete(node(), Ps0)],
