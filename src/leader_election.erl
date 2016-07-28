@@ -119,9 +119,11 @@ handle_call({election, Path, Ps}, From, State) ->
 	end;
 
 handle_call(start_election, _From, _State) ->
-	{ok, Ps} = application:get_env(participants),
+	{ok, Ps0} = application:get_env(participants),
 	?idbg("start_election participants: ~p, me: ~p", [ Ps, node() ]),
-	true = lists:member(node(), Ps),
+
+	% Guarantee, that node() is in the list and allow setting empty list for single-node configurations
+	Ps = [node() | lists:delete(node(), Ps0)],
 	if length(Ps) == 1 ->
 		{ reply, {leader_elected, node(), [ node() ]}, _State };
 	true ->
