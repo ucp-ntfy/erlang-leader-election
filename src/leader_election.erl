@@ -31,7 +31,9 @@ safe_gen_server_call(Server, Message, Timeout, DefaultValue) ->
 	end.
 
 elect(Timeout) ->
-	safe_gen_server_call(?SERVER, {start_election, Timeout}, Timeout, ?QFAILED).
+	Id = {node(), erlang:system_time(1000000)},
+	?idbg("Starting election with id ~p", [Id]),
+	safe_gen_server_call(?SERVER, {start_election, Timeout, Id}, Timeout, ?QFAILED).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -125,9 +127,9 @@ handle_call({election, Path, Ps, Id, Timeout}, From, State) ->
 handle_call({election, Path, Ps}, From, State) ->
   handle_call({election, Path, Ps, undefined, 3000}, From, State);
 
-handle_call({start_election, Timeout}, _From, _State) ->
+handle_call({start_election, Timeout, Id}, _From, _State) ->
 	{ok, Ps} = application:get_env(participants),
-	?idbg("start_election participants: ~p, me: ~p", [ Ps, node() ]),
+	?idbg("start_election ~p participants: ~p, me: ~p", [Id, Ps, node()]),
 
 	true = is_list(Ps),
 
@@ -136,12 +138,11 @@ handle_call({start_election, Timeout}, _From, _State) ->
 
 	true ->
 		true = lists:member(node(), Ps),
-		Id   = {node(), erlang:system_time(1000000)},
 		handle_call({election, [], Ps, Id, Timeout}, _From, _State)
 	end;
 
 handle_call(start_election, From, State) ->
-	handle_call({start_election, 60000}, From, State);
+	handle_call({start_election, 60000, undefined}, From, State);
 
 handle_call(ping, _From, State) ->
 	{reply, pong, State}
