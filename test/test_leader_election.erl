@@ -1,6 +1,6 @@
 #!/usr/bin/env escript
 %% -*- erlang -*-
-%%! -smp enable -name test1 -pz ebin
+%%! -smp enable -sname test1@localhost -pz ebin -setcookie cookie1
 
 wait_node(_Node, pang) ->
         ok;
@@ -13,7 +13,7 @@ stop_node(N) ->
 
 check_elect(Nodes, ExpectedMaster) ->
 	Masters = lists:map(
-		fun(N) -> 
+		fun(N) ->
 			case rpc:call(N, leader_election, elect, [ 2000 ]) of
 				{leader_elected,M,_} -> M;
 				quorum_failed        -> quorum_failed
@@ -21,12 +21,13 @@ check_elect(Nodes, ExpectedMaster) ->
 		end,
 		Nodes),
 	io:format("~p~n", [ Masters ]),
-	true = lists:all(fun(M) -> M == ExpectedMaster end, Masters).
+	true = lists:all(fun(M) -> M == ExpectedMaster end, Masters),
+	io:format("Test OK~n", []).
 
 test(test1, Nodes) ->
 	[Ns1|_] = Nodes,
 	check_elect(Nodes, Ns1);
-	
+
 test(test2, Nodes) ->
 	[Ns1|Rem1] = Nodes,
 	[Ns2|_   ] = Rem1,

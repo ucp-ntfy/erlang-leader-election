@@ -1,12 +1,11 @@
 #!/bin/sh 
 
-HOSTNAME=`hostname`
 NODES=""
 ERL_NODES_ARG="["
 COMMA=""
 for NODE in ns1 ns2 ns3 ns4 ns5; do
-	NODES="$NODES $NODE@$HOSTNAME"
-	ERL_NODES_ARG="$ERL_NODES_ARG $COMMA '$NODE@$HOSTNAME'"
+	NODES="$NODES $NODE@localhost"
+	ERL_NODES_ARG="$ERL_NODES_ARG $COMMA '$NODE@localhost'"
 	COMMA=","
 done
 ERL_NODES_ARG="$ERL_NODES_ARG ]"
@@ -26,7 +25,7 @@ for T in test1 test2 test3 test4; do
 
 	for NAME in $NODES; do
 		echo "Starting $NAME"
-		erl -pz ebin -name $NAME -leader_election participants "$ERL_NODES_ARG" -detached -kernel error_logger "{file, \"/tmp/erl.log.$NAME\"}"
+		erl -pz ebin -sname $NAME -leader_election participants "$ERL_NODES_ARG" -detached -kernel error_logger "{file, \"/tmp/erl.log.$NAME\"}" -setcookie cookie1
 
 	done
 	test_leader_election.erl $T $NODES
