@@ -21,6 +21,8 @@
 -define(PING_TIMEOUT, 500).
 
 safe_gen_server_call(Server, Message, Timeout, DefaultValue) ->
+	?idbg("params [~p;~p;~p;~p]", [Server, Message, Timeout, DefaultValue]),
+
 	case catch gen_server:call(Server, Message, Timeout) of
 		Err = {'EXIT',_} ->
 			?idbg("error ~p ~p ~p", [Server, Message, Err]),
