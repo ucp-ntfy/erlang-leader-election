@@ -8,7 +8,6 @@
 -export([elect/1]).
 -export([start_link/0]).
 -export([stop/0]).
--export([ping/0]).
 
 %% gen_server.
 -export([init/1]).
@@ -18,16 +17,25 @@
 -export([terminate/2]).
 -export([code_change/3]).
 
+-define(QFAILED, quorum_failed).
+-define(PING_TIMEOUT, 500).
+
 safe_gen_server_call(Server, Message, Timeout, DefaultValue) ->
+	?idbg("params [~p;~p;~p;~p]", [Server, Message, Timeout, DefaultValue]),
+
 	case catch gen_server:call(Server, Message, Timeout) of
-		{'EXIT',_} ->
+		Err = {'EXIT',_} ->
+			?idbg("error ~p ~p ~p", [Server, Message, Err]),
 			DefaultValue;
 		Response ->
+			?idbg("response ~p", [Response]),
 			Response
 	end.
 
 elect(Timeout) ->
-	safe_gen_server_call(?SERVER, start_election, Timeout, quorum_failed).
+	Id = {node(), erlang:system_time(1000000)},
+	?idbg("Starting election with id ~p", [Id]),
+	safe_gen_server_call(?SERVER, {start_election, Timeout, Id}, Timeout, ?QFAILED).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -35,26 +43,22 @@ start_link() ->
 stop() ->
     gen_server:call(?SERVER, stop).
 
-ping() ->
-	pong.
-
 init([]) ->
 	{ok, {}}.
 
-% node_alive(pong) ->
-%	true;
-%node_alive(pang) ->
-%	false;
 node_alive(N) ->
 	?idbg("pinging node ~p...", [ N ]),
-	Key = rpc:async_call(N, ?MODULE, handle_call, [ping, undef, undef]),
 
-	case catch rpc:nb_yield(Key, 500) of
-		{value,{reply,pong,undef}} ->
-			?idbg("node ~p is alive", [ N ]),
-			true;
-		Res ->
-			?idbg("node ~p is not alive (~p)", [ N, Res ]),
+	Ref = make_ref(),
+	{?MODULE, N} ! {ping, self(), Ref},
+
+	receive
+		{pong, Ref} ->
+			?idbg("node ~p is alive", [N]),
+			true
+
+	after ?PING_TIMEOUT ->
+			?idbg("node ~p is not alive", [N]),
 			false
 	end.
 
@@ -75,24 +79,28 @@ make_ring(Ps) ->
 	{LT,GT} = lists:partition(fun(P) -> P < Node end, Ps),
 	GT ++ LT.
 
-forward_next(Me, Others, Path, Ps, From, State) ->
-	case find_first_alive(Others) of
-		not_found ->
-			{reply, quorum_failed, State};
-		[ NextAlive | _ ] ->
-			?idbg("Next alive: ~p", [ NextAlive ]),
-			spawn_link(fun() ->
-				Reply = safe_gen_server_call({?SERVER, NextAlive}, {election, Path ++ [ Me ], Ps}, 3000, quorum_failed),
+forward_next(Me, Others, Path, Ps, From, State, Id, Timeout) ->
+	spawn_link(fun() ->
+		?idbg("Id: ~p", [Id]),
+
+		case find_first_alive(Others) of
+			not_found ->
+				?idbg("~p Quorum failed", [ Id ]),
+				gen_server:reply(From, ?QFAILED);
+
+			[ NextAlive | _ ] ->
+				?idbg("~p Next alive: ~p", [ Id, NextAlive ]),
+				Reply = safe_gen_server_call({?SERVER, NextAlive}, {election, Path ++ [ Me ], Ps}, Timeout, ?QFAILED),
 				gen_server:reply(From, Reply)
-			end),
-			{noreply, State}
-	end.
+		end
+	end),
+	{noreply, State}.
 
 handle_call(stop, _From, _State) ->
 	{stop, normal, stopped, _State};
 
-handle_call({election, Path, Ps}, From, State) ->
-	?idbg("election with Path ~p, Participants: ~p", [ Path, Ps ]),
+handle_call({election, Path, Ps, Id, Timeout}, From, State) ->
+	?idbg("election with Id ~p Path ~p, Participants: ~p", [ Id, Path, Ps ]),
 
 	[ Me | Others ] = make_ring(Ps),
 
@@ -100,27 +108,30 @@ handle_call({election, Path, Ps}, From, State) ->
 		[ PathInit | _ ] ->
 			if Me == PathInit ->
 				if length(Path) * 2 > length(Ps) ->
-					?idbg("Im a leader ~p", [ Me ]),
+					?idbg("~p Im a leader ~p", [ Id, Me ]),
 					{ reply, { leader_elected, Me, Path }, State };
 				true ->
-					?idbg("Quorum failed ~p", [ Me ]),
-					{ reply, quorum_failed, State }
+					?idbg("~p Quorum failed ~p", [ Id, Me ]),
+					{ reply, ?QFAILED, State }
 				end;
 			true ->
 				if Me < PathInit ->
-					forward_next(Me, Others, [], Ps, From, State);
+					forward_next(Me, Others, [], Ps, From, State, Id, Timeout);
 				true ->
-					forward_next(Me, Others, Path, Ps, From, State)
+					forward_next(Me, Others, Path, Ps, From, State, Id, Timeout)
 				end
 			end;
 
 		[] ->
-			forward_next(Me, Others, Path, Ps, From, State)
+			forward_next(Me, Others, Path, Ps, From, State, Id, Timeout)
 	end;
 
-handle_call(start_election, _From, _State) ->
+handle_call({election, Path, Ps}, From, State) ->
+  handle_call({election, Path, Ps, undefined, 3000}, From, State);
+
+handle_call({start_election, Timeout, Id}, _From, _State) ->
 	{ok, Ps} = application:get_env(participants),
-	?idbg("start_election participants: ~p, me: ~p", [ Ps, node() ]),
+	?idbg("start_election ~p participants: ~p, me: ~p", [Id, Ps, node()]),
 
 	true = is_list(Ps),
 
@@ -129,8 +140,11 @@ handle_call(start_election, _From, _State) ->
 
 	true ->
 		true = lists:member(node(), Ps),
-		handle_call({election, [], Ps}, _From, _State)
+		handle_call({election, [], Ps, Id, Timeout}, _From, _State)
 	end;
+
+handle_call(start_election, From, State) ->
+	handle_call({start_election, 60000, undefined}, From, State);
 
 handle_call(ping, _From, State) ->
 	{reply, pong, State}
@@ -144,6 +158,9 @@ handle_cast(_Msg, _State) ->
 	{noreply, _State}.
 
 %% @private
+handle_info({ping, ReplyTo, Ref}, State) ->
+	ReplyTo ! {pong, Ref},
+	{noreply, State};
 handle_info(_Info, _State) ->
 	{noreply, _State}.
 
@@ -153,3 +170,5 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, _State, _Extra) ->
 	{ok, _State}.
+
+% vim:noexpandtab
