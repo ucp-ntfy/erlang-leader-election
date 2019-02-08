@@ -90,7 +90,7 @@ forward_next(Me, Others, Path, Ps, From, State, Id, Timeout) ->
 
 			[ NextAlive | _ ] ->
 				?idbg("~p Next alive: ~p", [ Id, NextAlive ]),
-				Reply = safe_gen_server_call({?SERVER, NextAlive}, {election, Path ++ [ Me ], Ps}, Timeout, ?QFAILED),
+				Reply = safe_gen_server_call({?SERVER, NextAlive}, {election, Path ++ [ Me ], Ps, Id, Timeout}, Timeout, ?QFAILED),
 				gen_server:reply(From, Reply)
 		end
 	end),
